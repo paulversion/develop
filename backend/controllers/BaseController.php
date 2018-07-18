@@ -26,6 +26,9 @@ class BaseController extends Controller
 
      public  function beforeAction($action)
      {
+         echo "<pre>";
+         print_r($action);
+         exit();
 
          //不需要权限验证的控制器
          $skipController = [
@@ -38,7 +41,6 @@ class BaseController extends Controller
          //获取controller_id和action_id
          $controller_id = Yii::$app->controller->id;
          $action_id     = Yii::$app->controller->action->id;
-
          //判断用户是否登陆如果没有登陆跳转到登录页
          if (Yii::$app->user->isGuest && (!in_array($action_id, ['login','error']) ) ) {
              return  $this->redirect(['site/login']);
