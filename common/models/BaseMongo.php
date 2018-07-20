@@ -13,13 +13,18 @@ use yii\mongodb\ActiveRecord;
 use Yii;
 class BaseMongo extends ActiveRecord
 {
+    //mongo实例对象
     public static $log;
 
-    public static $_log_begin;
-    public static $_detail = [];
-    public static $_result = [];
-    private static $_document = ['title'=>'','cat_begin_time'=>'','cat_end_time'=>'','begin_time' => '',
-                                 'end_time'=>'','err_code'=>'','err_msg'=>'','exception'=>'','trace_details'=>''];
+    public    static  $log_begin;
+    protected static  $details = [];
+    private   static  $result = [];
+    private   static  $log_details =[];
+    private   static  $document = ['title'=>'','cat_begin_time'=>'','cat_end_time'=>'','begin_time' => '',
+                                    'end_time'=>'','err_code'=>'','err_msg'=>'','exception'=>'','trace_details'=>''];
+
+    public $topic;
+    public $log_store;
 
     /**
      * 获取mongo数据库的名称
@@ -69,36 +74,40 @@ class BaseMongo extends ActiveRecord
             if(isset($controller->mongoName[$action->actionMthod][1])){
                 static::$db_name  = $controller->mongoName[$action->actionMthod][1];
             }
-
         }
         $class_name  = get_class($controller);
+        $title       = $this->getMethodName($class_name,$action->actionMethod);
 
 
     }
 
     public  static  function openLog(){
-
         self::clearData();
-        self::$_log_begin = true;
+        self::$log_begin = true;
     }
 
     public  static function closeLog(){
-        self::$_log_begin = false;
+        self::$log_begin = false;
     }
 
     public static  function  canLog(){
-        return self::$_log_begin;
+        return self::$log_begin;
     }
 
     private static  function clearData(){
 
-        self::$_document = ['title'=>'','begin_time'=>0,'end_time'=>0,'error_code'=>0,'err_msg'=>'','exception'=>'','trace_detail'=>''];
-        self::$_detail   = [];
-        self::$_result   = [];
+        self::$document = ['title'=>'','begin_time'=>0,'end_time'=>0,'error_code'=>0,'err_msg'=>'','exception'=>'','trace_detail'=>''];
+        self::$details   = [];
+        self::$result   = [];
 
     }
 
-    public  static  function getMethodName($class_name,$action_name){
+    /***
+     * @param $class_name
+     * @param $action_name
+     * @throws \ReflectionException
+     */
+    private  function getMethodName($class_name,$action_name){
 
         $rf       = new \ReflectionClass($class_name);
         $methods   = $rf->getMethods(\ReflectionMethod::IS_PUBLIC);
@@ -107,10 +116,168 @@ class BaseMongo extends ActiveRecord
            if(strpos($method->name,'action') === false || $method->name == 'actions'){
                continue;
            }
+           $actionModel = new ActionModel($method);
+           if($action_name == $method->name){
+               return  $actionModel->getTitle();
+           }
+
         }
+
+        return '';
+    }
+
+    public  function begin($action_name='',$title=''){
+        self::openLog();
+        $this->addLogField('begin_time',date("Y-m-d H:i:s"));
+        $this->addLogField('cat_begin_time',microtime());
+        $this->addLogField('action',$action_name);
+        $this->addLogField('title',$title);
+        if(isset($_REQUEST)){
+            self::$log->addLogDetail(self::$document['title'].'-开始-请求参数',$_REQUEST);
+        }
+        if(isset($_SERVER['REMOTE_ADDR'])){
+            $this->addLogField('server_ip',$_SERVER['REMOTE_ADDR']);
+        }
+
+        register_shutdown_function(function (){
+            $this->end();
+        });
+    }
+
+    public  function  end($result){
+
+        if(!self::canLog() || empty(self::$document) || empty(self::$log)){
+            return false;
+        }
+        $this->addLogField('end_time',date('Y-m-d H:i:s'));
+        $this->addLogField('cat_end_time',microtime());
+        if(!empty($result)){
+            self::$result = $result;
+        }
+        self::$log->addLogDetail(self::$document['title'].'-结束-返回数据',self::$result);
+        self::$document['details'] = self::$details;
+        $this->addLogField('response',$result);
+        if($this->log_store && $this->topic){
+             $monitorTrack = [];
+            if(Yii::$app instanceof \yii\web\Application){
+                $monitorTrack['log_store'] = $this->log_store;
+                $monitorTrack['topic']     = $this->topic;
+                $monitorTrack['upload_data'] = self::$document;
+            }
+            if(Yii::$app instanceof \Yii\web\Application && count(self::$log_details) > 4){
+                $monitorTrack['log_store'] = $this->log_store;
+                $monitorTrack['topic'] = $this->topic;
+                $monitorTrack['upload_data'] = array_merge(self::$document,['console_log' => self::$log_details]);
+            }
+        }
+        try{
+
+            $collection = self::getCollection();
+            $rs         = $collection->insert(self::$document);
+
+        }catch (\Exception $exception){
+
+            Yii::info(var_export(self::$document),true);
+        }
+
+        self::closeLog();
+        self::clearData();
+
+
 
 
     }
+
+    /**
+     * 向mongo的document添加属性
+     * @param [string] $field_name 属性名
+     * @param [string|array] $value 属性具体内容
+     *
+     */
+    public  function addLogField($field_name,$value){
+        if(!self::canLog()){
+            return false;
+        }
+        self::$document[$field_name] = $value;
+
+    }
+
+    /**
+     * 给记录叠加属性
+     * @param [string] $title
+     * @param [string|array] $value
+     *
+     */
+    public function addLogFieldDetails($title,$value){
+
+        if(!self::canLog() || empty($title)){
+
+            return false;
+        }
+        $log_detail = [];
+
+        if(is_array($value)){
+            $log_detail = array_merge($log_detail,$value);
+        }else{
+            $log_detail['result'] = $value;
+        }
+        array_push(self::$log_details,$log_detail);
+
+    }
+
+    /**
+     * 将记录日志的字段添加到details 数组
+     * @param $title 日志标题
+     * @param string $log_data 日志内容
+     *
+     */
+    public  function addLogDetail($title,$log_data=''){
+
+        if(!self::canLog() || empty($title)){
+            return false;
+        }
+        self::is_error($log_data);
+        $log_detail = [];
+        if(is_array($log_data)){
+            $log_detail = array_merge($log_detail,$log_data);
+        }else{
+            $log_detail['result'] = $log_data;
+        }
+
+       array_push(self::$details,$log_detail);
+
+    }
+
+
+    /**
+     * 日志是否出错
+     * @param $log_data
+     * @return bool
+     */
+    private static function is_error($log_data){
+
+        if(is_string($log_data)){
+            return false;
+        }
+
+        if(!empty($log_data) && (isset($log_data['err_code']) || isset($log_data['err_msg']))){
+            self::$document['err_code'] = $log_data['err_code'];
+            self::$document['err_msg']  = $log_data['err_msg'];
+        }
+
+    }
+
+
+    public static function addException($exception){
+
+        if(!self::canLog()) return false;
+
+
+    }
+
+
+
+
 
 
 
