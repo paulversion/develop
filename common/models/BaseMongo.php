@@ -267,10 +267,9 @@ class BaseMongo extends ActiveRecord
 
     }
 
-
     public static function addException($exception){
 
-        if(!self::canLog()) return false;
+        if(!self::canLog()) return false ;
 
 
     }
