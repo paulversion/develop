@@ -164,12 +164,26 @@ class SiteController extends BaseController
     {
         $userName   = Yii::$app->request->post('username');
         $passWord   = Yii::$app->request->post('password');
+        if(empty($userName) || empty($passWord)){
+            $this->result['msg']  = '参数错误';
+            $this->result['code'] = 1;
+            return  $this->result;
+        }
         $user  = User::findByUsername($userName);
         if(!empty($user)){
             $this->result['msg']   = '用户已存在';
             $this->result['code']  = 1;
             return $this->result;
         }
+        $user = User::register($userName,$passWord);
+        if(empty($user)){
+            $this->result['msg']  = '注册失败';
+            $this->result['code'] = 1;
+            return $this->result;
+        }
+        Yii::$app->user->login($user);
+        $this->result['msg'] = '注册成功';
+        return $this->result;
     }
 
     /**
