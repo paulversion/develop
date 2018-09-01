@@ -6,9 +6,10 @@
  * Time: 19:37
  */
 
-namespace common\models;
+namespace common\models\mongo;
 
 
+use yii\db\Exception;
 use yii\mongodb\ActiveRecord;
 use Yii;
 class BaseMongo extends ActiveRecord
@@ -16,15 +17,10 @@ class BaseMongo extends ActiveRecord
     //mongo实例对象
     public static $log;
 
-    public    static  $log_begin;
-    protected static  $details = [];
-    private   static  $result = [];
-    private   static  $log_details =[];
-    private   static  $document = ['title'=>'','cat_begin_time'=>'','cat_end_time'=>'','begin_time' => '',
-                                    'end_time'=>'','err_code'=>'','err_msg'=>'','exception'=>'','trace_details'=>''];
-
-    public $topic;
-    public $log_store;
+    private    static  $log_begin = false;//能否记录日志
+    protected static  $details = [];//过程详情
+    private   static  $result = [];//返回结果
+    private   static  $document = ['title'=>'','begin_time'=>'','end_time'=>'','err_code'=>'','err_msg'=>''];//保存的日志记录
 
     /**
      * 获取mongo数据库的名称
@@ -47,7 +43,7 @@ class BaseMongo extends ActiveRecord
      * 获取mongo的集合,集合类似于关系数据库中的表
      * @return \yii\mongodb\Collection
      */
-    public  static  function getCollectionName()
+    public  static  function collectionName()
     {
            return static::$collection_name;
     }
@@ -75,8 +71,10 @@ class BaseMongo extends ActiveRecord
                 static::$db_name  = $controller->mongoName[$action->actionMthod][1];
             }
         }
+
         $class_name  = get_class($controller);
         $title       = $this->getMethodName($class_name,$action->actionMethod);
+        $this->begin($action->actionMethod, $title);
 
 
     }
@@ -96,7 +94,7 @@ class BaseMongo extends ActiveRecord
 
     private static  function clearData(){
 
-        self::$document = ['title'=>'','begin_time'=>0,'end_time'=>0,'error_code'=>0,'err_msg'=>'','exception'=>'','trace_detail'=>''];
+        self::$document = ['title'=>'','begin_time'=>0,'end_time'=>0,'error_code'=>0,'err_msg'=>''];
         self::$details   = [];
         self::$result   = [];
 
@@ -110,6 +108,7 @@ class BaseMongo extends ActiveRecord
     private  function getMethodName($class_name,$action_name){
 
         $rf       = new \ReflectionClass($class_name);
+        //获取当前控制器下的所有公有方法
         $methods   = $rf->getMethods(\ReflectionMethod::IS_PUBLIC);
 
         foreach ($methods as $method){
@@ -126,13 +125,17 @@ class BaseMongo extends ActiveRecord
         return '';
     }
 
+    /**
+     * 开始记录日志,可以在某个函数中间开始调用
+     * @param string $action_name
+     * @param string $title
+     */
     public  function begin($action_name='',$title=''){
         self::openLog();
         $this->addLogField('begin_time',date("Y-m-d H:i:s"));
-        $this->addLogField('cat_begin_time',microtime());
         $this->addLogField('action',$action_name);
         $this->addLogField('title',$title);
-        if(isset($_REQUEST)){
+        if(isset($_REQUEST)&& !empty(self::$log)){
             self::$log->addLogDetail(self::$document['title'].'-开始-请求参数',$_REQUEST);
         }
         if(isset($_SERVER['REMOTE_ADDR'])){
@@ -144,41 +147,21 @@ class BaseMongo extends ActiveRecord
         });
     }
 
-    public  function  end($result){
+    public  function  end($result = ''){
 
         if(!self::canLog() || empty(self::$document) || empty(self::$log)){
             return false;
         }
         $this->addLogField('end_time',date('Y-m-d H:i:s'));
-        $this->addLogField('cat_end_time',microtime());
+
         if(!empty($result)){
             self::$result = $result;
         }
         self::$log->addLogDetail(self::$document['title'].'-结束-返回数据',self::$result);
         self::$document['details'] = self::$details;
         $this->addLogField('response',$result);
-        if($this->log_store && $this->topic){
-             $monitorTrack = [];
-            if(Yii::$app instanceof \yii\web\Application){
-                $monitorTrack['log_store'] = $this->log_store;
-                $monitorTrack['topic']     = $this->topic;
-                $monitorTrack['upload_data'] = self::$document;
-            }
-            if(Yii::$app instanceof \Yii\web\Application && count(self::$log_details) > 4){
-                $monitorTrack['log_store'] = $this->log_store;
-                $monitorTrack['topic'] = $this->topic;
-                $monitorTrack['upload_data'] = array_merge(self::$document,['console_log' => self::$log_details]);
-            }
-        }
-        try{
-
-            $collection = self::getCollection();
-            $rs         = $collection->insert(self::$document);
-
-        }catch (\Exception $exception){
-
-            Yii::info(var_export(self::$document),true);
-        }
+         $collection = self::getCollection();
+         $rs         = $collection->insert(self::$document);
 
         self::closeLog();
         self::clearData();
@@ -202,28 +185,6 @@ class BaseMongo extends ActiveRecord
 
     }
 
-    /**
-     * 给记录叠加属性
-     * @param [string] $title
-     * @param [string|array] $value
-     *
-     */
-    public function addLogFieldDetails($title,$value){
-
-        if(!self::canLog() || empty($title)){
-
-            return false;
-        }
-        $log_detail = [];
-
-        if(is_array($value)){
-            $log_detail = array_merge($log_detail,$value);
-        }else{
-            $log_detail['result'] = $value;
-        }
-        array_push(self::$log_details,$log_detail);
-
-    }
 
     /**
      * 将记录日志的字段添加到details 数组
@@ -267,9 +228,29 @@ class BaseMongo extends ActiveRecord
 
     }
 
+    /**
+     * 异常日志
+     * @param Exception $exception
+     * @return bool
+     */
     public static function addException($exception){
 
         if(!self::canLog()) return false ;
+        $code     = $exception->getCode();
+        $message  = $exception->getMessage();
+        $log_data = [];
+        $log_data['err_code']     = $code;
+        $log_data['err_message']  = $message;
+        $log_data['file']         = $exception->getFile();
+        $log_data['line']         = $exception->getLine();
+        if(!empty(self::$log)){
+            self::$document['err_code'] = $code;
+            self::$document['err_msg']  = $message;
+            self::$log->addLogDetail(self::$document['title'].'异常',$log_data);
+            self::$document['err_code'] = $code;
+            self::$document['err_msg']  = $message;
+            self::$log->end();
+        }
 
 
     }

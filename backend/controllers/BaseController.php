@@ -26,10 +26,6 @@ class BaseController extends Controller
 
      public  function beforeAction($action)
      {
-         echo "<pre>";
-         print_r($action);
-         exit();
-
          //不需要权限验证的控制器
          $skipController = [
              'site/error',

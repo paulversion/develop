@@ -1,6 +1,7 @@
 <?php
 namespace frontend\controllers;
 
+use common\models\User;
 use services\model\Member;
 use services\model\MemberInfo;
 use services\model\MemberModel;
@@ -20,8 +21,9 @@ use frontend\models\ContactForm;
 /**
  * Site controller
  */
-class SiteController extends Controller
+class SiteController extends BaseController
 {
+
     /**
      * {@inheritdoc}
      */
@@ -86,20 +88,26 @@ class SiteController extends Controller
      */
     public function actionLogin()
     {
-        if (!Yii::$app->user->isGuest) {
-            return $this->goHome();
+        $userName = Yii::$app->request->post('username');
+        $passWord = Yii::$app->request->post('password');
+        if(empty($userName) || empty($passWord)){
+            $this->result['msg']   = '参数错误';
+            $this->result['code']  = 1;
+            return $this->result;
         }
-
-        $model = new LoginForm();
-        if ($model->load(Yii::$app->request->post()) && $model->login()) {
-            return $this->goBack();
-        } else {
-            $model->password = '';
-
-            return $this->render('login', [
-                'model' => $model,
-            ]);
+        $user = User::findByUsername($userName);
+        if(empty($user) || $user->validatePassword($passWord)){
+            $this->result['msg']   = '账号或密码错误';
+            $this->result['code']  = 1 ;
+            return  $this->result;
         }
+        if(!Yii::$app->user->login($user)){
+            $this->result['msg']  = '登录失败';
+            $this->result['code'] = 1;
+            return $this->result;
+        }
+        $this->result['msg'] = '登录成功';
+        return $this->result;
     }
 
     /**
@@ -152,20 +160,16 @@ class SiteController extends Controller
      *
      * @return mixed
      */
-    public function actionSignup()
+    public function actionRegister()
     {
-        $model = new SignupForm();
-        if ($model->load(Yii::$app->request->post())) {
-            if ($user = $model->signup()) {
-                if (Yii::$app->getUser()->login($user)) {
-                    return $this->goHome();
-                }
-            }
+        $userName   = Yii::$app->request->post('username');
+        $passWord   = Yii::$app->request->post('password');
+        $user  = User::findByUsername($userName);
+        if(!empty($user)){
+            $this->result['msg']   = '用户已存在';
+            $this->result['code']  = 1;
+            return $this->result;
         }
-
-        return $this->render('signup', [
-            'model' => $model,
-        ]);
     }
 
     /**

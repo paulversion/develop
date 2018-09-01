@@ -6,7 +6,7 @@
  * Time: 10:07
  */
 
-namespace common\models;
+namespace common\models\mongo;
 
 
 use yii\base\Model;

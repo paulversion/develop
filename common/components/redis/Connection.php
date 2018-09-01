@@ -42,7 +42,6 @@ class Connection extends \yii\redis\Connection
 
     public  function __call($name, $params)
     {
-
         $redisCommand = strtoupper($name);
         if (in_array($redisCommand, $this->redisCommands)) {
             return $this->executeCommand($redisCommand, $params);

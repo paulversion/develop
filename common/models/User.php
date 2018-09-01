@@ -186,4 +186,19 @@ class User extends ActiveRecord implements IdentityInterface
     {
         $this->password_reset_token = null;
     }
+
+    /**
+     * 注册保存用户信息
+     * @param $username
+     * @param $password
+     * @return null|static
+     */
+    public  static function register($username,$password){
+
+        $user = new static();
+        $user->username = $username;
+        $user->setPassword($password);
+        $user->generateAuthKey();
+        return $user->save() ? $user : null;
+    }
 }
